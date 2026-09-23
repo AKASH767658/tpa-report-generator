@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SinglepointAI">
+  <circle cx="32" cy="32" r="25" fill="none" stroke="#21a99d" stroke-width="10"/>
+  <circle cx="32" cy="32" r="9" fill="#263b55"/>
+  <circle cx="32" cy="7" r="4" fill="#263b55"/>
+  <circle cx="57" cy="32" r="4" fill="#263b55"/>
+  <circle cx="32" cy="57" r="4" fill="#263b55"/>
+  <circle cx="7" cy="32" r="4" fill="#263b55"/>
+</svg>

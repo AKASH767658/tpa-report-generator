@@ -1,0 +1,28 @@
+{
+  "company_name": "SinglepointAI",
+  "product_name": "TPA Go-Live Dashboard",
+  "logo_file": "singlepoint-ai-logo.svg",
+  "colors": {
+    "navy": "#104866",
+    "teal": "#009f9a",
+    "muted": "#49616a",
+    "border": "#061722",
+    "background": "#f6f4ed"
+  },
+  "downloadable_report_colors": {
+    "navy": "#104866",
+    "teal": "#009f9a",
+    "teal_light": "#67f2f0",
+    "muted": "#49616A",
+    "border": "#D5E4E8",
+    "background": "#FFFFFF",
+    "page_background": "#F4FAFA",
+    "card_background": "#FFFFFF",
+    "surface_subtle": "#EDF8F8",
+    "grid": "#E5F1F2",
+    "chart_secondary": "#104866",
+    "chart_tertiary": "#FF7D59",
+    "chart_quaternary": "#FFC857",
+    "shadow": "rgba(16, 72, 102, .08)"
+  }
+}
