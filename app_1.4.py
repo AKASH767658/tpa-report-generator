@@ -16,33 +16,22 @@ import streamlit as st
 
 BRANDING_DIR = Path("assets") / "branding"
 BRANDING_CONFIG_FILE = BRANDING_DIR / "branding.json"
-DEFAULT_DOWNLOADABLE_REPORT_COLORS = {
-    "navy": "#104866", "teal": "#00BBB4", "teal_light": "#08C8C5",
-    "muted": "#49616A", "border": "#D5E4E8", "background": "#FFFFFF",
-    "page_background": "#F4FAFA", "card_background": "#FFFFFF",
-    "surface_subtle": "#EDF8F8", "grid": "#E5F1F2",
-    "chart_secondary": "#104866", "chart_tertiary": "#FF7D59",
-    "chart_quaternary": "#FFC857", "shadow": "rgba(16, 72, 102, .08)",
-}
 DEFAULT_BRANDING = {
     "company_name": "SinglepointAI",
     "product_name": "TPA Go-Live Dashboard",
-    "logo_file": "logo.svg",
-    "colors": {
-        "navy": "#0b2532", "teal": "#087e7b", "muted": "#49616a",
-        "border": "#c9dfdc", "background": "#f6f4ed",
-    },
-    "downloadable_report_colors": DEFAULT_DOWNLOADABLE_REPORT_COLORS,
+    "logo_file": "singlepoint-ai-logo.svg",
+    "colors": {},
+    "downloadable_report_colors": {},
 }
 
 
 def load_branding():
     """Load branding from assets/branding without requiring code changes."""
     branding = {
-        **DEFAULT_BRANDING,
-        "colors": DEFAULT_BRANDING["colors"].copy(),
-        "downloadable_report_colors": DEFAULT_DOWNLOADABLE_REPORT_COLORS.copy(),
-    }
+    **DEFAULT_BRANDING,
+    "colors": DEFAULT_BRANDING["colors"].copy(),
+    "downloadable_report_colors": DEFAULT_BRANDING["downloadable_report_colors"].copy(),
+}
     try:
         with BRANDING_CONFIG_FILE.open(encoding="utf-8") as file:
             configured = json.load(file)
@@ -50,26 +39,41 @@ def load_branding():
             if isinstance(configured.get(key), str) and configured[key].strip():
                 branding[key] = configured[key].strip()
         if isinstance(configured.get("colors"), dict):
-            for key, value in configured["colors"].items():
-                if key in branding["colors"] and isinstance(value, str) and value.strip():
-                    branding["colors"][key] = value.strip()
+            branding["colors"] = {
+            key: value.strip()
+            for key, value in configured["colors"].items()
+            if isinstance(key, str)
+            and isinstance(value, str)
+            and value.strip()
+    }
         if isinstance(configured.get("downloadable_report_colors"), dict):
-            for key, value in configured["downloadable_report_colors"].items():
-                if key in branding["downloadable_report_colors"] and isinstance(value, str) and value.strip():
-                    branding["downloadable_report_colors"][key] = value.strip()
+            branding["downloadable_report_colors"] = {
+            key: value.strip()
+            for key, value in configured["downloadable_report_colors"].items()
+            if isinstance(key, str)
+            and isinstance(value, str)
+            and value.strip()
+    }
     except (OSError, json.JSONDecodeError):
         pass
     return branding
 
 
 def logo_html(branding, css_class="sp-logo"):
-    """Embed the configured logo in both the app and downloadable HTML."""
+    """Render the configured logo as a self-contained SVG image."""
     logo_path = BRANDING_DIR / branding["logo_file"]
+
     try:
         logo_bytes = logo_path.read_bytes()
-        mime_type = mimetypes.guess_type(logo_path.name)[0] or "image/png"
+        mime_type = mimetypes.guess_type(logo_path.name)[0] or "image/svg+xml"
         encoded = base64.b64encode(logo_bytes).decode("ascii")
-        return f'<img class="{css_class}" src="data:{mime_type};base64,{encoded}" alt="{escape(branding["company_name"])} logo">'
+
+        return (
+            f'<img class="{css_class}" '
+            f'src="data:{mime_type};base64,{encoded}" '
+            f'alt="{escape(branding["company_name"])} logo">'
+        )
+
     except OSError:
         return '<div class="sp-mark" aria-label="Brand logo"></div>'
 
@@ -136,8 +140,9 @@ st.markdown(
     .sp-highlight-metric { border:1px solid var(--sp-border); border-radius:9px; padding:14px 16px; background:var(--sp-navy); min-height:82px; }
     .sp-highlight-label { color:rgba(255,255,255,.72); font-size:13px; }
     .sp-highlight-value { color:#ffffff; font-size:25px; font-weight:600; margin-top:2px; }
-    .sp-highlight-metric--warning { background:#7A2626; border-color:#C64242; }
-    .sp-highlight-metric--warning .sp-highlight-label, .sp-highlight-metric--warning .sp-highlight-value { color:#FBDADA; }
+    .sp-highlight-metric--warning {{background:{COLORS['warning_bg']};border-color:{COLORS['warning_border']};}}
+    .sp-highlight-metric--warning .sp-highlight-label,.sp-highlight-metric--warning .sp-highlight-value {{color:{COLORS['warning_text']};
+}}
     .stTabs [data-baseweb="tab-list"] { gap:28px; border-bottom:1px solid var(--sp-border); }
     .stTabs [data-baseweb="tab"] { color:var(--sp-muted); font-weight:600; padding:10px 0; }
     .stTabs [aria-selected="true"] { color:var(--sp-navy) !important; border-bottom:2px solid var(--sp-teal); }
@@ -166,7 +171,7 @@ DATA_DIR = "data"
 CUSTOMER_FILE = os.path.join(DATA_DIR, "customers.csv")
 REQUIRED_CUSTOMER_COLUMNS = ["TPA", "GoLiveDate", "AccountManager", "ExpectedUsers", "Notes"]
 INTERNAL_USERS = ["Raksha", "Michael Haas"]
-FLAG_COLOR = "#C64242"
+FLAG_COLOR = BRANDING["colors"]["warning_border"]
 STALE_PLAN_THRESHOLD_DAYS = 14
 CHART_TICK_FORMATS = {"Daily": "%d %b", "Weekly": "%d %b %Y", "Monthly": "%b %Y"}
 
@@ -192,7 +197,12 @@ def save_customer(customer):
     pd.concat([customers, pd.DataFrame([customer])], ignore_index=True).to_csv(
         CUSTOMER_FILE, index=False
     )
-
+def delete_customer(tpa_name):
+    customers = load_customers()
+    customers = customers[
+        customers["TPA"].fillna("").str.casefold() != tpa_name.casefold()
+    ]
+    customers.to_csv(CUSTOMER_FILE, index=False)
 
 def find_tpa_from_logins(logins):
     if "GROUPS" not in logins or logins["GROUPS"].dropna().empty:
@@ -274,9 +284,9 @@ def apply_trend_chart_styling(fig, freq_label, go_live_date=None, y_max=None):
         # A pandas Timestamp in the marker is not JSON serializable.
         go_live_marker = pd.Timestamp(go_live_date).isoformat()
         fig.add_vline(
-            x=go_live_marker, line_dash="dash", line_color="#FF7D59",
+            x=go_live_marker, line_dash="dash", line_color=COLORS["chart_tertiary"],
             annotation_text="Go-live", annotation_position="top right",
-            annotation_font_color="#FF7D59",
+            annotation_font_color=COLORS["chart_tertiary"],
         )
     return fig
 
@@ -313,7 +323,7 @@ def export_safe_figure(figure):
     return pio.from_json(pio.to_json(figure, validate=False), output_type="Figure")
 
 
-def build_downloadable_report(customer, go_live_date, first_plan, plans, figures, branding):
+def build_downloadable_report(customer, go_live_date, first_plan, plans, figures, branding,include_logo=True,):
     """Create a standalone, branded HTML report with the generated charts,
     used as the source for the downloadable PDF."""
     startup_count = int((plans["Plan type"] == "Startup").sum())
@@ -356,8 +366,9 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
         metric_rows.append(f"<tr>{cells}</tr>")
     metric_html = f'<table style="width:100%;border-collapse:collapse;table-layout:fixed;">{"".join(metric_rows)}</table>'
 
-    stale_days_display = f"⚠ {days_since_last_plan_text}" if is_stale else days_since_last_plan_text
-    warning_bg, warning_text = "#7A2626", "#FBDADA"
+    stale_days_display = days_since_last_plan_text
+    warning_bg = colors["warning_bg"]
+    warning_text = colors["warning_text"]
     highlight_html = f'''<table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-top:2px;">
     <tr>
     <td style="width:50%;padding:0 7px 14px 0;">
@@ -369,7 +380,39 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
     <td style="width:50%;padding:0 0 14px 7px;">
       <div style="background:{warning_bg if is_stale else colors['navy']};border-radius:12px;padding:18px;min-height:78px;">
         <div style="color:{warning_text if is_stale else 'rgba(255,255,255,.72)'};font-size:11px;font-weight:700;margin-bottom:10px;">Days since last plan</div>
-        <div style="color:{warning_text if is_stale else '#ffffff'};font-size:21px;font-weight:800;">{escape(stale_days_display)}</div>
+        <div style="color:{warning_text if is_stale else '#ffffff'};font-size:21px;font-weight:800;">
+    {f'''
+    <span style="
+        display:inline-block;
+        width:18px;
+        height:18px;
+        margin-right:8px;
+        vertical-align:-2px;
+        position:relative;
+    ">
+        <span style="
+            position:absolute;
+            left:0;
+            top:0;
+            width:0;
+            height:0;
+            border-left:9px solid transparent;
+            border-right:9px solid transparent;
+            border-bottom:17px solid {warning_text};
+        "></span>
+        <span style="
+            position:absolute;
+            left:8px;
+            top:5px;
+            color:{warning_bg if is_stale else '#ffffff'};
+            font-size:11px;
+            font-weight:800;
+            line-height:10px;
+        ">!</span>
+    </span>
+    ''' if is_stale else ''}
+    {escape(stale_days_display)}
+</div>
       </div>
     </td>
     </tr></table>'''
@@ -393,14 +436,16 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
     chart_html = ""
     for figure in figures:
         figure = export_safe_figure(figure)
+        figure = export_safe_figure(figure)
+        figure = export_safe_figure(figure)
         figure.update_layout(
-            colorway=[colors["teal"], colors["navy"], colors["muted"]],
-            paper_bgcolor=colors["background"],
-            plot_bgcolor=colors["background"],
-            font={"family": "Arial, sans-serif", "color": colors["navy"]},
-            title={"font": {"size": 16, "color": colors["navy"]}},
-            margin={"l": 60, "r": 24, "t": 55, "b": 42},
-        )
+    colorway=[colors["teal"], colors["navy"], colors["muted"]],
+    paper_bgcolor=colors["background"],
+    plot_bgcolor=colors["background"],
+    font={"family": "Arial, sans-serif", "color": colors["navy"]},
+    title={"font": {"size": 16, "color": colors["navy"]}},
+    margin={"l": 60, "r": 24, "t": 55, "b": 42},
+)
         figure.update_xaxes(gridcolor=colors["border"], linecolor=colors["border"], automargin=True)
         figure.update_yaxes(gridcolor=colors["border"], linecolor=colors["border"], automargin=True, title_standoff=14)
         # Only backfill navy where a trace has no explicit color of its own —
@@ -414,11 +459,11 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
                 has_line_color = trace.line and trace.line.color
                 if not has_marker_color and not has_line_color:
                     trace.update(marker={"color": colors["navy"]}, line={"color": colors["navy"]})
-        img_bytes = figure.to_image(format="png", width=1200, height=550, scale=2)
+        img_bytes = figure.to_image(format="png", width=900, height=400, scale=2)
         encoded = base64.b64encode(img_bytes).decode("ascii")
         chart_html += (
             f'<div style="margin:18px 0;padding-top:14px;border-top:1px solid {colors["border"]};">'
-            f'<img src="data:image/png;base64,{encoded}" alt="chart" style="width:100%;height:auto;display:block;"></div>'
+            f'<img src="data:image/png;base64,{encoded}" alt="chart" style="width:75%;height:auto;display:block;margin:0 auto;"></div>'
         )
 
     return f"""<!DOCTYPE html>
@@ -426,12 +471,48 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
 <style>
 body {{ font-family: Arial, Helvetica, sans-serif; color: {colors['navy']}; margin: 0; background: {colors['background']}; font-size:14px; line-height:1.35; }}
 .page {{ padding: 34px 40px 44px; }}
+.report-logo-table {{
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 16px 0;
+}}
+
+.report-logo-table td {{
+    width: 180px;
+    height: auto;
+    padding: 0;
+    vertical-align: top;
+}}
+
+.report-logo {{
+    display: block;
+    width: 180px;
+    height: auto;
+    max-width: 180px;
+}}
 .eyebrow {{ color:{colors['teal']}; font-size:12px; font-weight:700; letter-spacing:0; text-transform:none; margin:0 0 8px; }}
 h1 {{ margin:0; font-size:32px; line-height:1.15; font-weight:700; letter-spacing:0; }}
 .subtitle {{ color:{colors['muted']}; margin:8px 0 0; font-size:14px; font-weight:600; letter-spacing:0; }}
-.details {{ background:{colors['background']}; border:1px solid {colors['border']}; padding:18px 22px; border-radius:12px; margin-top:24px; }}
+.details {{
+    background:{colors['background']};
+    border:1px solid {colors['border']};
+    padding:18px 22px;
+    border-radius:12px;
+    margin-top:24px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+}}
 .details h2 {{ margin:0 0 12px; font-size:16px; }} .details p {{ margin:7px 0; color:{colors['muted']}; font-size:13px; }} .details strong {{ color:{colors['navy']}; }}
 </style></head><body><div class="page">
+{f'''
+<table class="report-logo-table">
+    <tr>
+        <td>
+            {logo_html(branding, "report-logo")}
+        </td>
+    </tr>
+</table>
+''' if include_logo else ''}
 <div class="eyebrow">Production adoption report</div>
 <h1>{escape(str(customer['TPA']))}</h1>
 <div class="subtitle">Go-live progress, first-plan timing, and production activity</div>
@@ -448,18 +529,170 @@ h1 {{ margin:0; font-size:32px; line-height:1.15; font-weight:700; letter-spacin
 
 
 def build_pdf_report(customer, go_live_date, first_plan, plans, figures, branding):
-    """Render the report to PDF bytes via wkhtmltopdf (through pdfkit)."""
+    """Create the PDF report and overlay the exact SVG logo on page 1."""
+
+    import io
     import pdfkit
+
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import A4
+    from svglib.svglib import svg2rlg
+    from reportlab.graphics import renderPDF
+
     executable = find_wkhtmltopdf()
+
     if executable is None:
         raise RuntimeError("wkhtmltopdf is not available on this computer.")
-    html = build_downloadable_report(customer, go_live_date, first_plan, plans, figures, branding)
-    options = {
-        "page-size": "A4", "encoding": "UTF-8", "quiet": "",
-        "margin-top": "12mm", "margin-bottom": "12mm", "margin-left": "12mm", "margin-right": "12mm",
+
+    configuration = pdfkit.configuration(
+        wkhtmltopdf=executable
+    )
+
+    # ---------------------------------------------------------
+    # 1. Generate the main report WITHOUT the logo.
+    # ---------------------------------------------------------
+    report_html = build_downloadable_report(
+        customer,
+        go_live_date,
+        first_plan,
+        plans,
+        figures,
+        branding,
+        include_logo=False,
+    )
+    report_html = report_html.replace(
+    ".page { padding: 34px 40px 44px; }",
+    ".page { padding: 78px 40px 44px; }"
+)
+
+    report_options = {
+        "page-size": "A4",
+        "encoding": "UTF-8",
+        "quiet": "",
+        "enable-local-file-access": "",
+        "print-media-type": "",
+        "margin-top": "12mm",
+        "margin-bottom": "12mm",
+        "margin-left": "12mm",
+        "margin-right": "12mm",
     }
-    configuration = pdfkit.configuration(wkhtmltopdf=executable)
-    return pdfkit.from_string(html, False, options=options, configuration=configuration)
+
+    report_pdf = pdfkit.from_string(
+        report_html,
+        False,
+        options=report_options,
+        configuration=configuration,
+    )
+
+    # ---------------------------------------------------------
+    # 2. Locate the exact SinglepointAI SVG logo.
+    # ---------------------------------------------------------
+    logo_path = (BRANDING_DIR / branding["logo_file"]).resolve()
+
+    if not logo_path.is_file():
+        raise RuntimeError(
+            f"Logo file not found: {logo_path}"
+        )
+
+    # ---------------------------------------------------------
+    # 3. Read the SVG as a vector drawing.
+    #
+    #    No PNG conversion.
+    # ---------------------------------------------------------
+    drawing = svg2rlg(str(logo_path))
+
+    if drawing is None:
+        raise RuntimeError(
+            f"Could not read SVG logo: {logo_path}"
+        )
+
+    if not drawing.width or not drawing.height:
+        raise RuntimeError(
+            "The SVG logo has no usable width/height."
+        )
+
+    # ---------------------------------------------------------
+    # 4. Create a temporary one-page PDF containing ONLY
+    #    the logo.
+    #
+    #    This page is NOT added to the final report.
+    # ---------------------------------------------------------
+    logo_pdf_buffer = io.BytesIO()
+
+    page_width, page_height = A4
+
+    logo_canvas = canvas.Canvas(
+        logo_pdf_buffer,
+        pagesize=A4,
+    )
+
+    # Desired logo width.
+    target_width = 150
+
+    scale = target_width / float(drawing.width)
+    target_height = float(drawing.height) * scale
+
+    # Keep the logo proportional.
+    drawing.scale(scale, scale)
+
+    # Position the logo above the report title.
+    left = 52
+    top = 29
+
+    x = left
+    y = page_height - top - target_height
+
+    renderPDF.draw(
+        drawing,
+        logo_canvas,
+        x,
+        y,
+    )
+
+    logo_canvas.showPage()
+    logo_canvas.save()
+
+    logo_pdf_buffer.seek(0)
+
+    # ---------------------------------------------------------
+    # 5. Read the report PDF and temporary logo PDF.
+    # ---------------------------------------------------------
+    report_reader = PdfReader(
+        io.BytesIO(report_pdf)
+    )
+
+    logo_reader = PdfReader(
+        logo_pdf_buffer
+    )
+
+    logo_page = logo_reader.pages[0]
+
+    # ---------------------------------------------------------
+    # 6. Overlay the logo ONLY on page 1.
+    # ---------------------------------------------------------
+    report_page = report_reader.pages[0]
+
+    report_page.merge_page(
+        logo_page,
+        over=True,
+    )
+
+    # ---------------------------------------------------------
+    # 7. Write the final PDF.
+    #
+    #    The temporary logo page is never added as a new page.
+    # ---------------------------------------------------------
+    output = io.BytesIO()
+
+    writer = PdfWriter()
+
+    for page in report_reader.pages:
+        writer.add_page(page)
+
+    writer.write(output)
+
+    return output.getvalue()
 
 
 def find_wkhtmltopdf():
@@ -506,6 +739,7 @@ with setup_tab:
         if pd.notna(parsed_date):
             existing_go_live = parsed_date.date()
 
+    
     with st.form("customer_form", clear_on_submit=False):
         name = st.text_input("TPA name", value="" if existing_customer is None else existing_customer["TPA"])
         go_live = st.date_input(
@@ -525,6 +759,15 @@ with setup_tab:
         )
         notes = st.text_area("Notes", value="" if existing_customer is None else display_value(existing_customer["Notes"]))
         save = st.form_submit_button("Save TPA changes")
+    delete = st.button(
+        "Delete TPA",
+        disabled=(tpa_to_edit == "Add a new TPA")
+)
+
+    if delete:
+        delete_customer(tpa_to_edit)
+        st.success(f"Deleted {tpa_to_edit}.")
+        st.rerun()
 
     if save:
         if not name.strip():
@@ -591,30 +834,46 @@ with report_tab:
                 customers["TPA"].fillna("").str.casefold() == detected_tpa.casefold()
             ]
             if matches.empty:
-                st.error(
-                    f"{detected_tpa} is not in the TPA register. Add it in TPA setup and save its production go-live date before creating the report."
-                )
-            else:
-                customer = matches.iloc[0]
-                go_live_date = pd.to_datetime(customer["GoLiveDate"], errors="coerce")
-                if pd.isna(go_live_date):
-                    st.error("The detected TPA does not have a valid production go-live date.")
-                else:
-                    report_plans = plans.copy()
-                    report_plans["ProcessedAt"] = pd.to_datetime(report_plans["timestamp"], errors="coerce")
-                    report_plans = report_plans.dropna(subset=["ProcessedAt"])
-                    if "USER_NAME" in report_plans.columns:
-                        report_plans = report_plans[~report_plans["USER_NAME"].isin(excluded_users)]
-                    report_plans = classify_plans(report_plans)
+                auto_go_live_date = (
+        pd.to_datetime(plans["timestamp"], errors="coerce").min().date().isoformat()
+        if not plans.empty and pd.to_datetime(plans["timestamp"], errors="coerce").notna().any()
+        else ""
+    )
+                save_customer({
+        "TPA": detected_tpa,
+        "GoLiveDate": auto_go_live_date,
+        "AccountManager": "",
+        "ExpectedUsers": 0,
+        "Notes": "",
+    })
 
-                    report_logins = pd.DataFrame(columns=["LoggedAt", "username"])
-                    if {"timestamp", "username"}.issubset(logins.columns):
+                customers = load_customers()
+                matches = customers[
+                    customers["TPA"].fillna("").str.casefold() == detected_tpa.casefold()
+    ]
+
+                st.success(f"TPA '{detected_tpa}' was added automatically.")
+            
+            customer = matches.iloc[0]
+            go_live_date = pd.to_datetime(customer["GoLiveDate"], errors="coerce")
+            if pd.isna(go_live_date):
+                st.error("The detected TPA does not have a valid production go-live date.")
+            else:
+                report_plans = plans.copy()
+                report_plans["ProcessedAt"] = pd.to_datetime(report_plans["timestamp"], errors="coerce")
+                report_plans = report_plans.dropna(subset=["ProcessedAt"])
+                if "USER_NAME" in report_plans.columns:
+                    report_plans = report_plans[~report_plans["USER_NAME"].isin(excluded_users)]
+                report_plans = classify_plans(report_plans)
+
+                report_logins = pd.DataFrame(columns=["LoggedAt", "username"])
+                if {"timestamp", "username"}.issubset(logins.columns):
                         report_logins = logins.copy()
                         report_logins["LoggedAt"] = pd.to_datetime(report_logins["timestamp"], errors="coerce")
                         report_logins = report_logins.dropna(subset=["LoggedAt"])
                         report_logins = report_logins[~report_logins["username"].isin(excluded_users)]
 
-                    st.session_state["go_live_report"] = {
+                st.session_state["go_live_report"] = {
                         "customer": customer, "go_live_date": go_live_date.date(),
                         "first_plan": first_plan_after_go_live(report_plans, go_live_date.date()),
                         "plans": report_plans, "logins": report_logins,
@@ -655,17 +914,41 @@ with report_tab:
                 unsafe_allow_html=True,
             )
         with c8:
-            card_class = "sp-highlight-metric sp-highlight-metric--warning" if is_stale else "sp-highlight-metric"
-            value_text = f"{days_since_last_plan} days" if days_since_last_plan is not None else "-"
+            if is_stale:
+                card_bg = COLORS["warning_bg"]
+                card_border = COLORS["warning_border"]
+                card_label = COLORS["warning_text"]
+                card_value = COLORS["warning_text"]
+            else:
+                card_bg = COLORS["navy"]
+                card_border = COLORS["border"]
+                card_label = "rgba(255,255,255,.72)"
+                card_value = "#ffffff"
+
+            value_text = (
+                f"{days_since_last_plan} days"
+                if days_since_last_plan is not None
+                else "-"
+    )
+
             if is_stale:
                 value_text = f"⚠ {value_text}"
+
             st.markdown(
-                f"""<div class="{card_class}">
-                <div class="sp-highlight-label">Days since last plan</div>
-                <div class="sp-highlight-value">{escape(value_text)}</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
+                f"""<div style="border:1px solid {card_border};
+border-radius:9px;
+padding:14px 16px;
+background:{card_bg};
+min-height:82px;">
+<div style="color:{card_label};font-size:13px;">
+Days since last plan
+</div>
+<div style="color:{card_value};font-size:25px;font-weight:600;margin-top:2px;">
+{value_text}
+</div>
+</div>""",
+        unsafe_allow_html=True,
+    )
 
         if pd.isna(first_plan):
             st.warning("No plan in this file was processed on or after the production go-live date.")
@@ -686,7 +969,12 @@ with report_tab:
             login_counts = daily_counts(report_logins, "LoggedAt", "Logins", chart_freq)
             if is_bar_view:
                 fig_logins = px.bar(login_counts, x="Date", y="Logins", text="Logins", title=f"Logins by {chart_freq_word}")
-                fig_logins.update_traces(textposition="outside", marker_color=COLORS["teal"])
+                fig_logins.update_traces(
+    textposition="inside",
+    insidetextanchor="middle",
+    textfont={"size": 12},
+    marker_color=COLORS["teal"],
+)
             else:
                 fig_logins = px.line(login_counts, x="Date", y="Logins", markers=True, title=f"Logins by {chart_freq_word}")
                 fig_logins.update_traces(marker_color=COLORS["teal"], line_color=COLORS["teal"])
@@ -700,7 +988,7 @@ with report_tab:
             st.info("No valid plan timestamps are available in the uploaded file.")
         else:
             plan_totals = daily_counts(report_plans, "ProcessedAt", "Plans processed", chart_freq)
-            plan_totals["Cumulative"] = plan_totals["Plans processed"].cumsum()
+            
             plan_types_present = sorted(report_plans["Plan type"].dropna().unique())
             type_pivot = type_split_counts(report_plans, "ProcessedAt", chart_freq, plan_totals["Date"])
             long_type_counts = type_pivot.melt(id_vars="Date", value_vars=plan_types_present, var_name="Plan type", value_name="Plans processed")
@@ -723,20 +1011,16 @@ with report_tab:
             for _, row in plan_totals.iterrows():
                 if row["Plans processed"] > 0:
                     fig_uploads.add_annotation(
-                        x=row["Date"], y=row["Plans processed"], text=str(int(row["Plans processed"])),
-                        showarrow=False, yshift=10, font={"color": COLORS["navy"], "size": 12},
-                    )
+    x=row["Date"],
+    y=row["Plans processed"] * 0.85,
+    text=str(int(row["Plans processed"])),
+    showarrow=False,
+    font={"color": COLORS["navy"], "size": 12},
+)
 
             # Cumulative running total on a secondary axis, per TPA request to see overall progress.
-            fig_uploads.add_trace(go.Scatter(
-                x=plan_totals["Date"], y=plan_totals["Cumulative"], name="Cumulative total",
-                mode="lines", line={"color": COLORS["navy"], "dash": "dot"}, yaxis="y2",
-            ))
-            fig_uploads.update_layout(yaxis2={
-                "title": "Cumulative", "overlaying": "y", "side": "right",
-                "rangemode": "tozero", "tickformat": ",d",
-                "dtick": integer_dtick_for(plan_totals["Cumulative"].max()),
-            })
+            
+            
 
             st.plotly_chart(fig_uploads, width="stretch")
             report_figures.append(fig_uploads)
@@ -749,7 +1033,18 @@ with report_tab:
             elif report_plans.empty:
                 st.info("No plan data is available for the uploader chart.")
             else:
-                top_uploaders = (report_plans["USER_NAME"].fillna("Unknown").value_counts().head(10).sort_values().rename_axis("User").reset_index(name="Plans processed"))
+                top_uploaders = (
+    report_plans["USER_NAME"]
+    .fillna("Unknown")
+    .astype(str)
+    .str.replace(r"\s+null$", "", regex=True)
+    .str.strip()
+    .value_counts()
+    .head(10)
+    .sort_values()
+    .rename_axis("User")
+    .reset_index(name="Plans processed")
+)
                 fig_uploaders = px.bar(top_uploaders, x="Plans processed", y="User", orientation="h", text="Plans processed", title="Top plan uploaders")
                 fig_uploaders.update_traces(marker_color=COLORS["teal"])
                 st.plotly_chart(fig_uploaders, width="stretch")
@@ -776,7 +1071,7 @@ with report_tab:
         st.subheader("Report details")
         st.dataframe(details, width="stretch", hide_index=True)
         html_report = build_downloadable_report(
-            customer, go_live_date, first_plan, report_plans, report_figures, BRANDING
+            customer, go_live_date, first_plan, report_plans, report_figures, BRANDING,include_logo=True,
         )
         st.download_button(
             "Download interactive HTML report",

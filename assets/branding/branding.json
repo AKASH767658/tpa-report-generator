@@ -3,12 +3,18 @@
   "product_name": "TPA Go-Live Dashboard",
   "logo_file": "singlepoint-ai-logo.svg",
   "colors": {
-    "navy": "#104866",
-    "teal": "#009f9a",
-    "muted": "#49616a",
-    "border": "#061722",
-    "background": "#f6f4ed"
-  },
+    
+  "navy": "#104866",
+  "teal": "#009f9a",
+  "muted": "#49616a",
+  "border": "#061722",
+  "background": "#f6f4ed",
+  "warning_bg": "#7A2626",
+  "warning_border": "#C64242",
+  "warning_text": "#FBDADA",
+  "chart_tertiary": "#FF7D59"
+}
+  ,
   "downloadable_report_colors": {
     "navy": "#104866",
     "teal": "#009f9a",
