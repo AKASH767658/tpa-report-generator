@@ -638,7 +638,7 @@ def build_pdf_report(customer, go_live_date, first_plan, plans, figures, brandin
 
     # Position the logo above the report title.
     left = 52
-    top = 29
+    top = 30
 
     x = left
     y = page_height - top - target_height
