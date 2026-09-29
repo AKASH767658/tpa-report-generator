@@ -173,7 +173,12 @@ REQUIRED_CUSTOMER_COLUMNS = ["TPA", "GoLiveDate", "AccountManager", "ExpectedUse
 INTERNAL_USERS = ["Raksha", "Michael Haas"]
 FLAG_COLOR = BRANDING["colors"]["warning_border"]
 STALE_PLAN_THRESHOLD_DAYS = 14
-CHART_TICK_FORMATS = {"Daily": "%d %b", "Weekly": "%d %b %Y", "Monthly": "%b %Y"}
+CHART_TICK_FORMATS = {
+    "Daily": "%d %b",
+    "Weekly": "%d %b %Y",
+    "Monthly": "%b %Y",
+    "Quarterly": "Q%q %Y",
+}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 if not os.path.exists(CUSTOMER_FILE):
@@ -289,7 +294,151 @@ def apply_trend_chart_styling(fig, freq_label, go_live_date=None, y_max=None):
             annotation_font_color=COLORS["chart_tertiary"],
         )
     return fig
+def build_period_report_figures(
+    report_plans,
+    report_logins,
+    period_label,
+    period_freq,
+    go_live_date,
+    ownership_figure,
+    categories_figure,
+):
+    """Build the progression charts used by the selected downloadable report."""
+    figures = []
 
+    is_bar_view = period_label in ("Monthly", "Quarterly")
+    period_word = {
+    "Monthly": "month",
+    "Quarterly": "quarter",
+}[period_label]
+
+    # Login activity
+    if not report_logins.empty:
+        login_counts = daily_counts(
+            report_logins,
+            "LoggedAt",
+            "Logins",
+            period_freq,
+        )
+
+        if is_bar_view:
+            fig_logins = px.bar(
+                login_counts,
+                x="Date",
+                y="Logins",
+                text="Logins",
+                title=f"Logins by {period_word}",
+            )
+            fig_logins.update_traces(
+                textposition="inside",
+                insidetextanchor="middle",
+                textfont={"size": 12},
+                marker_color=COLORS["teal"],
+            )
+        else:
+            fig_logins = px.line(
+                login_counts,
+                x="Date",
+                y="Logins",
+                markers=True,
+                title=f"Logins by {period_label.lower()}",
+            )
+            fig_logins.update_traces(
+                marker_color=COLORS["teal"],
+                line_color=COLORS["teal"],
+            )
+
+        apply_trend_chart_styling(
+            fig_logins,
+            period_label,
+            go_live_date,
+            y_max=login_counts["Logins"].max(),
+        )
+        flag_zero_activity(fig_logins, login_counts, "Logins")
+        figures.append(fig_logins)
+
+    # Plan-processing activity
+    if not report_plans.empty:
+        plan_totals = daily_counts(
+            report_plans,
+            "ProcessedAt",
+            "Plans processed",
+            period_freq,
+        )
+
+        plan_types_present = sorted(
+            report_plans["Plan type"].dropna().unique()
+        )
+
+        type_pivot = type_split_counts(
+            report_plans,
+            "ProcessedAt",
+            period_freq,
+            plan_totals["Date"],
+        )
+
+        long_type_counts = type_pivot.melt(
+            id_vars="Date",
+            value_vars=plan_types_present,
+            var_name="Plan type",
+            value_name="Plans processed",
+        )
+
+        if is_bar_view:
+            fig_uploads = px.bar(
+                long_type_counts,
+                x="Date",
+                y="Plans processed",
+                color="Plan type",
+                barmode="stack",
+                title=f"Plans processed by {period_word}",
+                color_discrete_map=PLAN_TYPE_COLORS,
+            )
+        else:
+            fig_uploads = px.line(
+                long_type_counts,
+                x="Date",
+                y="Plans processed",
+                color="Plan type",
+                markers=True,
+                title=f"Plans processed by {period_label.lower()}",
+                color_discrete_map=PLAN_TYPE_COLORS,
+            )
+
+        fig_uploads.update_layout(
+            legend_title_text="Plan type"
+        )
+
+        apply_trend_chart_styling(
+            fig_uploads,
+            period_label,
+            go_live_date,
+            y_max=plan_totals["Plans processed"].max(),
+        )
+
+        flag_zero_activity(
+            fig_uploads,
+            plan_totals,
+            "Plans processed",
+        )
+
+        for _, row in plan_totals.iterrows():
+            if row["Plans processed"] > 0:
+                fig_uploads.add_annotation(
+                    x=row["Date"],
+                    y=row["Plans processed"] * 0.85,
+                    text=str(int(row["Plans processed"])),
+                    showarrow=False,
+                    font={"color": COLORS["navy"], "size": 12},
+                )
+
+        figures.append(fig_uploads)
+    if ownership_figure is not None:
+            figures.append(ownership_figure)
+    
+    if categories_figure is not None:
+            figures.append(categories_figure)
+    return figures
 
 def flag_zero_activity(fig, counts_df, value_col):
     """Mark periods with no activity at all with a small red 'x' at the baseline,
@@ -301,6 +450,8 @@ def flag_zero_activity(fig, counts_df, value_col):
             marker={"color": FLAG_COLOR, "size": 10, "symbol": "x"},
             name="No activity", showlegend=True,
         ))
+
+    
     return fig
 
 
@@ -381,36 +532,7 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
       <div style="background:{warning_bg if is_stale else colors['navy']};border-radius:12px;padding:18px;min-height:78px;">
         <div style="color:{warning_text if is_stale else 'rgba(255,255,255,.72)'};font-size:11px;font-weight:700;margin-bottom:10px;">Days since last plan</div>
         <div style="color:{warning_text if is_stale else '#ffffff'};font-size:21px;font-weight:800;">
-    {f'''
-    <span style="
-        display:inline-block;
-        width:18px;
-        height:18px;
-        margin-right:8px;
-        vertical-align:-2px;
-        position:relative;
-    ">
-        <span style="
-            position:absolute;
-            left:0;
-            top:0;
-            width:0;
-            height:0;
-            border-left:9px solid transparent;
-            border-right:9px solid transparent;
-            border-bottom:17px solid {warning_text};
-        "></span>
-        <span style="
-            position:absolute;
-            left:8px;
-            top:5px;
-            color:{warning_bg if is_stale else '#ffffff'};
-            font-size:11px;
-            font-weight:800;
-            line-height:10px;
-        ">!</span>
-    </span>
-    ''' if is_stale else ''}
+    
     {escape(stale_days_display)}
 </div>
       </div>
@@ -932,7 +1054,7 @@ with report_tab:
     )
 
             if is_stale:
-                value_text = f"⚠ {value_text}"
+                value_text = f"{value_text}"
 
             st.markdown(
                 f"""<div style="border:1px solid {card_border};
@@ -954,11 +1076,26 @@ Days since last plan
             st.warning("No plan in this file was processed on or after the production go-live date.")
 
         chart_freq_label = st.radio(
-            "Chart granularity", options=["Weekly", "Monthly", "Daily"], index=0, horizontal=True,
-        )
-        st.caption("Applies to the Login activity and Plan-processing activity charts below, and carries through to the downloaded report.")
-        chart_freq = {"Daily": "D", "Weekly": "W", "Monthly": "ME"}[chart_freq_label]
-        chart_freq_word = {"Daily": "day", "Weekly": "week", "Monthly": "month"}[chart_freq_label]
+    "Chart granularity",
+    options=["Weekly", "Monthly", "Daily"],
+    horizontal=True,
+)
+
+        st.caption(
+    "Select a chart granularity to update the Login activity and Plan-processing activity charts and the downloaded report."
+)
+
+        chart_freq = {
+    "Daily": "D",
+    "Weekly": "W",
+    "Monthly": "ME",
+}[chart_freq_label]
+
+        chart_freq_word = {
+    "Daily": "day",
+    "Weekly": "week",
+    "Monthly": "month",
+}[chart_freq_label]
 
         is_bar_view = chart_freq_label in ("Weekly", "Monthly")
 
@@ -1026,6 +1163,8 @@ Days since last plan
             report_figures.append(fig_uploads)
 
         st.subheader("Plan ownership and categories")
+        fig_uploaders = None
+        fig_categories = None
         uploaders_column, categories_column = st.columns(2)
         with uploaders_column:
             if "USER_NAME" not in report_plans.columns:
@@ -1070,8 +1209,38 @@ Days since last plan
         ])
         st.subheader("Report details")
         st.dataframe(details, width="stretch", hide_index=True)
+        st.subheader("Download report")
+        download_report_type = st.radio(
+    "Report type",
+        options=["Monthly", "Quarterly"],
+        horizontal=True,
+)
+
+        download_report_config = {
+    "Monthly": ("ME", "Monthly"),
+    "Quarterly": ("QE", "Quarterly"),
+}
+
+        download_freq, download_period_label = download_report_config[download_report_type]
+
+        download_figures = build_period_report_figures(
+    report_plans,
+    report_logins,
+    download_period_label,
+    download_freq,
+    go_live_date,
+    fig_uploaders,
+    fig_categories,
+)
         html_report = build_downloadable_report(
-            customer, go_live_date, first_plan, report_plans, report_figures, BRANDING,include_logo=True,
+    customer,
+    go_live_date,
+    first_plan,
+    report_plans,
+    download_figures,
+    BRANDING,
+    include_logo=True,
+
         )
         st.download_button(
             "Download interactive HTML report",
@@ -1085,8 +1254,13 @@ Days since last plan
             if st.button("Prepare PDF report", icon=":material/picture_as_pdf:"):
                 try:
                     st.session_state["pdf_report"] = build_pdf_report(
-                        customer, go_live_date, first_plan, report_plans, report_figures, BRANDING
-                    )
+    customer,
+    go_live_date,
+    first_plan,
+    report_plans,
+    download_figures,
+    BRANDING,
+)
                     st.session_state["pdf_report_tpa"] = customer["TPA"]
                 except Exception as error:
                     st.error(f"Could not create the PDF report: {error}")
