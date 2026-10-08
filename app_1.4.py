@@ -12,7 +12,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
-
+from graylog_playwright import run_graylog_automation
+from spai_prod import run_spai_prod_automation
+from tpa_list import TPAS
 
 BRANDING_DIR = Path("assets") / "branding"
 BRANDING_CONFIG_FILE = BRANDING_DIR / "branding.json"
@@ -240,14 +242,41 @@ def classify_plans(plans):
 
 
 def daily_counts(data, timestamp_column, count_name, freq="D"):
-    """Group timestamps into counts per period. freq: 'D' daily, 'W' weekly, 'ME' monthly.
-    pd.Grouper fills any gap periods within the range with a zero count."""
+    """Group timestamps into counts per period and keep empty periods as zero."""
+
+    if data.empty:
+        return pd.DataFrame(columns=["Date", count_name])
+
+    data = data.copy()
+    data[timestamp_column] = pd.to_datetime(data[timestamp_column], errors="coerce")
+    data = data.dropna(subset=[timestamp_column])
+
+    if data.empty:
+        return pd.DataFrame(columns=["Date", count_name])
+
     counts = (
         data.groupby(pd.Grouper(key=timestamp_column, freq=freq))
         .size()
-        .reset_index(name=count_name)
+        .rename(count_name)
     )
-    return counts.rename(columns={timestamp_column: "Date"}).sort_values("Date")
+
+    start = counts.index.min()
+    end = counts.index.max()
+
+    full_range = pd.date_range(
+        start=start,
+        end=end,
+        freq=freq,
+        tz=counts.index.tz,
+    )
+
+    counts = counts.reindex(full_range, fill_value=0)
+
+    return (
+        counts.rename_axis("Date")
+        .reset_index()
+        .sort_values("Date")
+    )
 
 
 def type_split_counts(data, timestamp_column, freq, all_dates):
@@ -306,20 +335,22 @@ def build_period_report_figures(
     """Build the progression charts used by the selected downloadable report."""
     figures = []
 
-    is_bar_view = period_label in ("Monthly", "Quarterly")
+    is_bar_view = True
     period_word = {
+    "Daily": "day",
     "Monthly": "month",
     "Quarterly": "quarter",
+    
 }[period_label]
 
     # Login activity
     if not report_logins.empty:
-        login_counts = daily_counts(
-            report_logins,
-            "LoggedAt",
-            "Logins",
-            period_freq,
-        )
+        login_counts = overall_counts(
+    download_logins,
+    "LoggedAt",
+    "Logins",
+    chart_freq,
+)
 
         if is_bar_view:
             fig_logins = px.bar(
@@ -359,12 +390,12 @@ def build_period_report_figures(
 
     # Plan-processing activity
     if not report_plans.empty:
-        plan_totals = daily_counts(
-            report_plans,
-            "ProcessedAt",
-            "Plans processed",
-            period_freq,
-        )
+        plan_totals = overall_counts(
+    download_plans,
+    "ProcessedAt",
+    "Plans processed",
+    chart_freq,
+)
 
         plan_types_present = sorted(
             report_plans["Plan type"].dropna().unique()
@@ -410,11 +441,11 @@ def build_period_report_figures(
         )
 
         apply_trend_chart_styling(
-            fig_uploads,
-            period_label,
-            go_live_date,
-            y_max=plan_totals["Plans processed"].max(),
-        )
+    fig_uploads,
+    chart_freq_label,
+    go_live_date,
+    y_max=plan_totals["Plans processed"].max(),
+)
 
         flag_zero_activity(
             fig_uploads,
@@ -429,7 +460,7 @@ def build_period_report_figures(
                     y=row["Plans processed"] * 0.85,
                     text=str(int(row["Plans processed"])),
                     showarrow=False,
-                    font={"color": COLORS["navy"], "size": 12},
+                    font={"color": "#ffffff", "size": 12, "family": "Arial"},
                 )
 
         figures.append(fig_uploads)
@@ -441,17 +472,6 @@ def build_period_report_figures(
     return figures
 
 def flag_zero_activity(fig, counts_df, value_col):
-    """Mark periods with no activity at all with a small red 'x' at the baseline,
-    so a TPA overseeing onboarding can spot stalled periods at a glance."""
-    zero_periods = counts_df[counts_df[value_col] == 0]
-    if not zero_periods.empty:
-        fig.add_trace(go.Scatter(
-            x=zero_periods["Date"], y=[0] * len(zero_periods), mode="markers",
-            marker={"color": FLAG_COLOR, "size": 10, "symbol": "x"},
-            name="No activity", showlegend=True,
-        ))
-
-    
     return fig
 
 
@@ -474,7 +494,7 @@ def export_safe_figure(figure):
     return pio.from_json(pio.to_json(figure, validate=False), output_type="Figure")
 
 
-def build_downloadable_report(customer, go_live_date, first_plan, plans, figures, branding,include_logo=True,):
+def build_downloadable_report(customer, go_live_date, first_plan, plans, figures, branding,report_period_text,include_logo=True,):
     """Create a standalone, branded HTML report with the generated charts,
     used as the source for the downloadable PDF."""
     startup_count = int((plans["Plan type"] == "Startup").sum())
@@ -615,6 +635,12 @@ body {{ font-family: Arial, Helvetica, sans-serif; color: {colors['navy']}; marg
 .eyebrow {{ color:{colors['teal']}; font-size:12px; font-weight:700; letter-spacing:0; text-transform:none; margin:0 0 8px; }}
 h1 {{ margin:0; font-size:32px; line-height:1.15; font-weight:700; letter-spacing:0; }}
 .subtitle {{ color:{colors['muted']}; margin:8px 0 0; font-size:14px; font-weight:600; letter-spacing:0; }}
+.report-period {{
+    color:{colors['teal']};
+    margin-top:8px;
+    font-size:13px;
+    font-weight:700;
+}}
 .details {{
     background:{colors['background']};
     border:1px solid {colors['border']};
@@ -638,6 +664,7 @@ h1 {{ margin:0; font-size:32px; line-height:1.15; font-weight:700; letter-spacin
 <div class="eyebrow">Production adoption report</div>
 <h1>{escape(str(customer['TPA']))}</h1>
 <div class="subtitle">Go-live progress, first-plan timing, and production activity</div>
+<div class="report-period">{escape(report_period_text)}</div>
 {milestone_html}
 <div style="margin-top:20px;">{metric_html}</div>
 {highlight_html}
@@ -650,7 +677,7 @@ h1 {{ margin:0; font-size:32px; line-height:1.15; font-weight:700; letter-spacin
 </div></body></html>"""
 
 
-def build_pdf_report(customer, go_live_date, first_plan, plans, figures, branding):
+def build_pdf_report(customer, go_live_date, first_plan, plans, figures, branding,report_period_text,):
     """Create the PDF report and overlay the exact SVG logo on page 1."""
 
     import io
@@ -681,6 +708,7 @@ def build_pdf_report(customer, go_live_date, first_plan, plans, figures, brandin
         plans,
         figures,
         branding,
+        report_period_text,
         include_logo=False,
     )
     report_html = report_html.replace(
@@ -839,7 +867,47 @@ st.markdown(
 st.title("TPA production go-live report")
 st.caption("Track production go-live, first plan processed, and adoption activity in one report.")
 
-setup_tab, report_tab = st.tabs(["TPA setup", "Go-live report"])
+setup_tab, report_tab = st.tabs(
+    ["TPA setup", "Go-live report"]
+)
+
+
+@st.dialog("Import Graylog CSVs")
+def import_graylog_dialog():
+    selected_tpa = st.selectbox(
+        "Select TPA",
+        TPAS,
+        key="graylog_import_tpa",
+    )
+
+    graylog_target = st.radio(
+        "Graylog target",
+        ["PP-Prod", "SPAI-Prod"],
+        horizontal=True,
+        key="graylog_import_target",
+    )
+
+    if st.button("Import Graylog CSVs", type="primary"):
+        try:
+            if graylog_target == "SPAI-Prod":
+                automation = run_spai_prod_automation
+            else:
+                automation = run_graylog_automation
+
+            with st.spinner(f"Running {graylog_target} Graylog automation..."):
+                result = automation(selected_tpa)
+
+            st.session_state["graylog_output_folder"] = result["output_folder"]
+            st.session_state["graylog_tpa"] = selected_tpa
+
+            st.success(
+                f"{graylog_target} Graylog CSVs imported for {selected_tpa}."
+            )
+
+            st.rerun()
+
+        except Exception as error:
+            st.error(f"Graylog automation failed: {error}")
 
 with setup_tab:
     st.header("TPA register")
@@ -905,25 +973,77 @@ with setup_tab:
     st.dataframe(setup_customers, width="stretch", hide_index=True)
 
 with report_tab:
-    st.header("Production adoption")
-    st.caption("The TPA is detected automatically from the login export. Upload both files to create the report.")
+    report_header_left, report_header_right = st.columns([5, 1])
+
+    with report_header_left:
+        st.header("Production adoption")
+
+    with report_header_right:
+        if st.button("Import Graylog", type="primary"):
+            import_graylog_dialog()
+
+    st.caption(
+        "The TPA is detected automatically from the login export. "
+        "Upload both files to create the report."
+    )
 
     customers = load_customers()
-    plan_csv = st.file_uploader("Plan-processing CSV", type="csv")
-    login_csv = st.file_uploader("Login activity CSV", type="csv")
+
     plans, logins = None, None
+    plan_csv, login_csv = None, None
 
-    if plan_csv is not None:
-        try:
-            plans = pd.read_csv(plan_csv)
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            st.error("The plan file could not be read as a CSV.")
-    if login_csv is not None:
-        try:
-            logins = pd.read_csv(login_csv)
-        except (UnicodeDecodeError, pd.errors.ParserError):
-            st.error("The login file could not be read as a CSV.")
+    graylog_output_folder = st.session_state.get("graylog_output_folder")
 
+    if graylog_output_folder:
+        output_folder = Path(graylog_output_folder)
+
+        if output_folder.exists():
+            csv_files = list(output_folder.glob("*.csv"))
+
+            for csv_file in csv_files:
+                try:
+                    dataframe = pd.read_csv(csv_file)
+
+                    if {"username", "GROUPS"}.issubset(dataframe.columns):
+                        logins = dataframe
+
+                    elif {"USER_NAME", "timestamp"}.issubset(dataframe.columns):
+                        plans = dataframe
+
+                except (UnicodeDecodeError, pd.errors.ParserError):
+                    continue
+
+            if plans is not None and logins is not None:
+                st.success("Graylog CSVs loaded automatically.")
+            else:
+                st.warning("Could not find both required Graylog CSVs.")
+
+    else:
+        plan_csv = st.file_uploader(
+            "Plan-processing CSV",
+            type="csv",
+        )
+
+        login_csv = st.file_uploader(
+            "Login activity CSV",
+            type="csv",
+        )
+
+        if plan_csv is not None:
+            try:
+                plans = pd.read_csv(plan_csv)
+            except (UnicodeDecodeError, pd.errors.ParserError):
+                st.error("The plan file could not be read as a CSV.")
+
+        if login_csv is not None:
+            try:
+                logins = pd.read_csv(login_csv)
+            except (UnicodeDecodeError, pd.errors.ParserError):
+                st.error("The login file could not be read as a CSV.")
+
+
+
+    
     detected_tpa = find_tpa_from_logins(logins) if logins is not None else None
     if detected_tpa:
         st.info(f"Detected TPA: {detected_tpa}")
@@ -1074,36 +1194,210 @@ Days since last plan
 
         if pd.isna(first_plan):
             st.warning("No plan in this file was processed on or after the production go-live date.")
+        report_type = st.radio(
+            "Report type",
+            options=["Overall", "Monthly", "Quarterly", "Custom date range"],
+            horizontal=True,
 
-        chart_freq_label = st.radio(
-    "Chart granularity",
-    options=["Weekly", "Monthly", "Daily"],
-    horizontal=True,
+
+)  
+        download_plans = report_plans.copy()
+        download_logins = report_logins.copy()
+
+        download_period_label = "Monthly"
+        download_freq = "ME"
+        download_period_suffix = "overall"
+
+        if report_type == "Monthly":
+            available_months = sorted(
+                set(download_plans["ProcessedAt"].dropna().dt.to_period("M"))
+                | set(download_logins["LoggedAt"].dropna().dt.to_period("M"))
+            )
+
+            if available_months:
+                month_options = {
+                    period: period.strftime("%B %Y")
+                    for period in available_months
+                }
+
+                selected_month = st.selectbox(
+                    "Select month",
+                    options=available_months,
+                    format_func=lambda period: month_options[period],
+                )
+
+                start = selected_month.start_time.tz_localize("UTC")
+                end = (selected_month + 1).start_time.tz_localize("UTC")
+
+                download_plans = download_plans[
+                    (download_plans["ProcessedAt"] >= start)
+                    & (download_plans["ProcessedAt"] <= end)
+                ]
+
+                download_logins = download_logins[
+                    (download_logins["LoggedAt"] >= start)
+                    & (download_logins["LoggedAt"] <= end)
+                ]
+
+                download_period_label = "Daily"
+                download_freq = "D"
+                download_period_suffix = selected_month.strftime("%Y-%m")
+
+        elif report_type == "Quarterly":
+            available_quarters = sorted(
+                set(download_plans["ProcessedAt"].dropna().dt.to_period("Q"))
+                | set(download_logins["LoggedAt"].dropna().dt.to_period("Q"))
+            )
+
+            if available_quarters:
+                quarter_options = {
+                    period: str(period)
+                    for period in available_quarters
+                }
+
+                selected_quarter = st.selectbox(
+                    "Select quarter",
+                    options=available_quarters,
+                    format_func=lambda period: quarter_options[period],
+                )
+
+                start = selected_quarter.start_time.tz_localize("UTC")
+                end = selected_quarter.end_time.tz_localize("UTC")
+
+                download_plans = download_plans[
+                    (download_plans["ProcessedAt"] >= start)
+                    & (download_plans["ProcessedAt"] <= end)
+                ]
+
+                download_logins = download_logins[
+                    (download_logins["LoggedAt"] >= start)
+                    & (download_logins["LoggedAt"] <= end)
+                ]
+
+                download_period_label = "Monthly"
+                download_freq = "ME"
+                download_period_suffix = str(selected_quarter).replace("/", "-")
+
+        elif report_type == "Custom date range":
+            available_dates = []
+
+            if not download_plans.empty:
+                available_dates.append(download_plans["ProcessedAt"].min().date())
+                available_dates.append(download_plans["ProcessedAt"].max().date())
+
+            if not download_logins.empty:
+                available_dates.append(download_logins["LoggedAt"].min().date())
+                available_dates.append(download_logins["LoggedAt"].max().date())
+
+            default_start = min(available_dates) if available_dates else date.today()
+            default_end = max(available_dates) if available_dates else date.today()
+
+            selected_dates = st.date_input(
+                "Select date range",
+                value=(default_start, default_end),
+            )
+
+            if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                selected_start, selected_end = selected_dates
+
+                start = pd.Timestamp(selected_start, tz="UTC")
+                end = pd.Timestamp(selected_end, tz="UTC") + pd.Timedelta(days=1)
+
+                download_plans = download_plans[
+                    (download_plans["ProcessedAt"] >= start)
+                    & (download_plans["ProcessedAt"] < end)
+                ]
+
+                download_logins = download_logins[
+                    (download_logins["LoggedAt"] >= start)
+                    & (download_logins["LoggedAt"] < end)
+                ]
+
+                download_period_label = "Daily"
+                download_freq = "D"
+                download_period_suffix = (
+                    f"{selected_start:%Y-%m-%d}-to-{selected_end:%Y-%m-%d}"
+                )
+        if report_type == "Overall":
+            report_period_text = "Overall"
+
+        elif report_type == "Monthly":
+            report_period_text = selected_month.strftime("%B %Y")
+
+        elif report_type == "Quarterly":
+            report_period_text = str(selected_quarter)
+
+        elif report_type == "Custom date range":
+            report_period_text = (
+            f"{selected_start.strftime('%B')} {selected_start.day}, "
+            f"{selected_start.year} – "
+            f"{selected_end.strftime('%B')} {selected_end.day}, "
+            f"{selected_end.year}"
+    )
+        filtered_first_plan = first_plan_after_go_live(
+    download_plans,
+    go_live_date,
 )
 
-        st.caption(
-    "Select a chart granularity to update the Login activity and Plan-processing activity charts and the downloaded report."
-)
+        filtered_last_plan = last_plan_processed(download_plans)
+         
+# ... Monthly / Quarterly / Custom date range code ...
 
-        chart_freq = {
-    "Daily": "D",
-    "Weekly": "W",
-    "Monthly": "ME",
-}[chart_freq_label]
+# Keep these for the existing dashboard graphs
+        # Use the selected report type for the dashboard charts.
+        if report_type == "Overall":
+            chart_freq_label = "Weekly"
+            chart_freq = "W"
+            chart_freq_word = "week"
 
-        chart_freq_word = {
-    "Daily": "day",
-    "Weekly": "week",
-    "Monthly": "month",
-}[chart_freq_label]
+        elif report_type == "Monthly":
+            chart_freq_label = "Daily"
+            chart_freq = "D"
+            chart_freq_word = "day"
 
-        is_bar_view = chart_freq_label in ("Weekly", "Monthly")
+        elif report_type == "Quarterly":
+            chart_freq_label = "Monthly"
+            chart_freq = "ME"
+            chart_freq_word = "month"
 
+        elif report_type == "Custom date range":
+            chart_freq_label = "Daily"
+            chart_freq = "D"
+            chart_freq_word = "day"
+
+        is_bar_view = True
+        if report_type == "Overall":
+            def overall_counts(data, timestamp_column, count_name, freq):
+                counts = daily_counts(
+            data,
+            timestamp_column,
+            count_name,
+            freq,
+        )
+
+                if counts.empty:
+                    return counts
+
+                full_range = pd.date_range(
+            start=counts["Date"].min(),
+            end=counts["Date"].max(),
+            freq=freq,
+        )
+
+                return (
+                counts.set_index("Date")
+            .reindex(full_range, fill_value=0)
+            .rename_axis("Date")
+            .reset_index()
+        )
+        else:
+            overall_counts = daily_counts
+        
         st.subheader("Login activity")
-        if report_logins.empty:
+        if download_logins.empty:
             st.info("The login CSV needs `timestamp` and `username` columns with valid data to show the login trend.")
         else:
-            login_counts = daily_counts(report_logins, "LoggedAt", "Logins", chart_freq)
+            login_counts = daily_counts(download_logins, "LoggedAt", "Logins", chart_freq)
             if is_bar_view:
                 fig_logins = px.bar(login_counts, x="Date", y="Logins", text="Logins", title=f"Logins by {chart_freq_word}")
                 fig_logins.update_traces(
@@ -1115,19 +1409,30 @@ Days since last plan
             else:
                 fig_logins = px.line(login_counts, x="Date", y="Logins", markers=True, title=f"Logins by {chart_freq_word}")
                 fig_logins.update_traces(marker_color=COLORS["teal"], line_color=COLORS["teal"])
-            apply_trend_chart_styling(fig_logins, chart_freq_label, go_live_date, y_max=login_counts["Logins"].max())
+            apply_trend_chart_styling(
+    fig_logins,
+    chart_freq_label,
+    go_live_date if report_type == "Overall" else None,
+    y_max=login_counts["Logins"].max(),
+)
             flag_zero_activity(fig_logins, login_counts, "Logins")
             st.plotly_chart(fig_logins, width="stretch")
             report_figures.append(fig_logins)
 
         st.subheader("Plan-processing activity")
-        if report_plans.empty:
+        if download_plans.empty:
             st.info("No valid plan timestamps are available in the uploaded file.")
         else:
-            plan_totals = daily_counts(report_plans, "ProcessedAt", "Plans processed", chart_freq)
+            plan_totals = daily_counts(download_plans, "ProcessedAt", "Plans processed", chart_freq)
             
-            plan_types_present = sorted(report_plans["Plan type"].dropna().unique())
-            type_pivot = type_split_counts(report_plans, "ProcessedAt", chart_freq, plan_totals["Date"])
+            plan_types_present = sorted(download_plans["Plan type"].dropna().unique())
+
+            type_pivot = type_split_counts(
+    download_plans,
+    "ProcessedAt",
+    chart_freq,
+    plan_totals["Date"],
+)
             long_type_counts = type_pivot.melt(id_vars="Date", value_vars=plan_types_present, var_name="Plan type", value_name="Plans processed")
 
             if is_bar_view:
@@ -1141,7 +1446,12 @@ Days since last plan
                     title=f"Plans processed by {chart_freq_word}", color_discrete_map=PLAN_TYPE_COLORS,
                 )
             fig_uploads.update_layout(legend_title_text="Plan type")
-            apply_trend_chart_styling(fig_uploads, chart_freq_label, go_live_date, y_max=plan_totals["Plans processed"].max())
+            apply_trend_chart_styling(
+    fig_uploads,
+    chart_freq_label,
+    go_live_date if report_type == "Overall" else None,
+    y_max=plan_totals["Plans processed"].max(),
+)
             flag_zero_activity(fig_uploads, plan_totals, "Plans processed")
 
             # Total-per-bar labels (segment-level labels get cluttered once stacked).
@@ -1152,7 +1462,7 @@ Days since last plan
     y=row["Plans processed"] * 0.85,
     text=str(int(row["Plans processed"])),
     showarrow=False,
-    font={"color": COLORS["navy"], "size": 12},
+    font={"color": "#ffffff", "size": 12, "family": "Arial"},
 )
 
             # Cumulative running total on a secondary axis, per TPA request to see overall progress.
@@ -1167,13 +1477,13 @@ Days since last plan
         fig_categories = None
         uploaders_column, categories_column = st.columns(2)
         with uploaders_column:
-            if "USER_NAME" not in report_plans.columns:
+            if "USER_NAME" not in download_plans.columns:
                 st.info("Add a `USER_NAME` column to the plan CSV to view top uploaders.")
-            elif report_plans.empty:
+            elif download_plans.empty:
                 st.info("No plan data is available for the uploader chart.")
             else:
                 top_uploaders = (
-    report_plans["USER_NAME"]
+    download_plans["USER_NAME"]
     .fillna("Unknown")
     .astype(str)
     .str.replace(r"\s+null$", "", regex=True)
@@ -1189,7 +1499,7 @@ Days since last plan
                 st.plotly_chart(fig_uploaders, width="stretch")
                 report_figures.append(fig_uploaders)
         with categories_column:
-            category_counts = report_plans["Plan type"].value_counts().rename_axis("Plan type").reset_index(name="Plans")
+            category_counts = download_plans["Plan type"].value_counts().rename_axis("Plan type").reset_index(name="Plans")
             if category_counts.empty:
                 st.info("No plan data is available for the category chart.")
             else:
@@ -1201,47 +1511,56 @@ Days since last plan
                 report_figures.append(fig_categories)
 
         details = pd.DataFrame([
-            {"Field": "TPA", "Value": customer["TPA"]},
-            {"Field": "Production go-live date", "Value": go_live_date.isoformat()},
-            {"Field": "First plan processed after go-live", "Value": first_plan.isoformat(sep=" ") if pd.notna(first_plan) else "Not found"},
-            {"Field": "Last plan processed", "Value": last_plan.isoformat(sep=" ") if pd.notna(last_plan) else "Not found"},
-            {"Field": "Days since last plan processed", "Value": f"{days_since_last_plan} days" if days_since_last_plan is not None else "Not available"},
-        ])
+    {"Field": "TPA", "Value": customer["TPA"]},
+    {"Field": "Production go-live date", "Value": go_live_date.isoformat()},
+    {
+        "Field": "First plan processed after go-live",
+        "Value": (
+            filtered_first_plan.isoformat(sep=" ")
+            if pd.notna(filtered_first_plan)
+            else "Not found"
+        ),
+    },
+    {
+        "Field": "Last plan processed",
+        "Value": (
+            filtered_last_plan.isoformat(sep=" ")
+            if pd.notna(filtered_last_plan)
+            else "Not found"
+        ),
+    },
+    {
+        "Field": "Days since last plan processed",
+        "Value": (
+            f"{(date.today() - filtered_last_plan.date()).days} days"
+            if pd.notna(filtered_last_plan)
+            else "Not available"
+        ),
+    },
+])
         st.subheader("Report details")
         st.dataframe(details, width="stretch", hide_index=True)
-        st.subheader("Download report")
-        download_report_type = st.radio(
-    "Report type",
-        options=["Monthly", "Quarterly"],
-        horizontal=True,
-)
-
-        download_report_config = {
-    "Monthly": ("ME", "Monthly"),
-    "Quarterly": ("QE", "Quarterly"),
-}
-
-        download_freq, download_period_label = download_report_config[download_report_type]
 
         download_figures = build_period_report_figures(
-    report_plans,
-    report_logins,
+    download_plans,
+    download_logins,
     download_period_label,
     download_freq,
-    go_live_date,
+go_live_date if report_type == "Overall" else None,
     fig_uploaders,
     fig_categories,
 )
+
         html_report = build_downloadable_report(
     customer,
     go_live_date,
-    first_plan,
-    report_plans,
+    filtered_first_plan,
+    download_plans,
     download_figures,
     BRANDING,
+    report_period_text,
     include_logo=True,
-
-        )
+)
         st.download_button(
             "Download interactive HTML report",
             data=html_report,
@@ -1256,10 +1575,11 @@ Days since last plan
                     st.session_state["pdf_report"] = build_pdf_report(
     customer,
     go_live_date,
-    first_plan,
-    report_plans,
+    filtered_first_plan,
+    download_plans,
     download_figures,
     BRANDING,
+    report_period_text,
 )
                     st.session_state["pdf_report_tpa"] = customer["TPA"]
                 except Exception as error:

@@ -3,3 +3,5 @@ pandas
 plotly
 jinja2
 kaleido
+playwright
+python-dotenv
