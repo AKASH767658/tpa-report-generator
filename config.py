@@ -24,8 +24,26 @@ GRAYLOG_PASSWORD = os.getenv("GRAYLOG_PASSWORD")
 
 DOWNLOAD_DIR = Path.home() / "Downloads"
 
+# Resolve the Desktop as configured by Windows. On this computer it is
+# redirected to OneDrive, so Path.home() / "Desktop" is not the visible
+# Desktop folder. Fall back to the normal local Desktop when OneDrive is not
+# configured.
+_desktop_candidates = [
+    os.getenv("OneDrive"),
+    os.getenv("OneDriveCommercial"),
+    os.getenv("OneDriveConsumer"),
+]
+DESKTOP_DIR = next(
+    (
+        Path(candidate) / "Desktop"
+        for candidate in _desktop_candidates
+        if candidate and (Path(candidate) / "Desktop").is_dir()
+    ),
+    Path.home() / "Desktop",
+)
+
 # Save output on the computer of the person running the EXE
-OUTPUT_DIR = Path.home() / "Desktop" / "graylog_outputs"
+OUTPUT_DIR = DESKTOP_DIR / "graylog_outputs"
 
 
 # Clear error if configuration is missing

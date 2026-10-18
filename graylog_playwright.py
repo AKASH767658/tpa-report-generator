@@ -1,7 +1,12 @@
 from pathlib import Path
 from urllib import response
 from playwright.sync_api import sync_playwright
-from config import GRAYLOG_URL, GRAYLOG_USERNAME, GRAYLOG_PASSWORD
+from config import (
+    DESKTOP_DIR,
+    GRAYLOG_URL,
+    GRAYLOG_USERNAME,
+    GRAYLOG_PASSWORD,
+)
 
 
 # =========================================================
@@ -9,7 +14,7 @@ from config import GRAYLOG_URL, GRAYLOG_USERNAME, GRAYLOG_PASSWORD
 # =========================================================
 
 TPA_NAME = ""
-OUTPUT_DIR = Path.home() / "Desktop" / "graylog_outputs"
+OUTPUT_DIR = DESKTOP_DIR / "graylog_outputs"
 TPA_GRAYLOG_NAMES = {
     "BPP": "Benefit Plans Plus LLC",
 }
@@ -3098,8 +3103,7 @@ def run_graylog_automation(tpa_name):
     TPA_NAME = str(tpa_name).strip()
 
     OUTPUT_DIR = (
-        Path.home()
-        / "Desktop"
+        DESKTOP_DIR
         / "graylog_outputs"
         / TPA_NAME
     )

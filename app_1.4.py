@@ -311,8 +311,17 @@ def integer_dtick_for(max_value):
 def apply_trend_chart_styling(fig, freq_label, go_live_date=None, y_max=None):
     """Shared styling for the Login/Plan trend charts: integer y-axis ticks,
     a date format that matches the selected granularity, and a go-live marker."""
-    fig.update_yaxes(tickformat=",d", rangemode="tozero", dtick=integer_dtick_for(y_max))
-    fig.update_xaxes(tickformat=CHART_TICK_FORMATS[freq_label])
+    fig.update_yaxes(
+    tickformat=",d",
+    rangemode="tozero",
+    dtick=integer_dtick_for(y_max),
+    showgrid=False,
+)
+
+    fig.update_xaxes(
+        tickformat=CHART_TICK_FORMATS[freq_label],
+        showgrid=False,
+    )
     if go_live_date is not None:
         # Kaleido serializes Plotly figures when producing PDF chart images.
         # A pandas Timestamp in the marker is not JSON serializable.
@@ -338,9 +347,9 @@ def build_period_report_figures(
     is_bar_view = True
     period_word = {
     "Daily": "day",
+    "Weekly": "week",
     "Monthly": "month",
     "Quarterly": "quarter",
-    
 }[period_label]
 
     # Login activity
@@ -391,10 +400,10 @@ def build_period_report_figures(
     # Plan-processing activity
     if not report_plans.empty:
         plan_totals = overall_counts(
-    download_plans,
+    report_plans,
     "ProcessedAt",
     "Plans processed",
-    chart_freq,
+    period_freq,
 )
 
         plan_types_present = sorted(
@@ -442,7 +451,7 @@ def build_period_report_figures(
 
         apply_trend_chart_styling(
     fig_uploads,
-    chart_freq_label,
+    period_label,
     go_live_date,
     y_max=plan_totals["Plans processed"].max(),
 )
@@ -979,7 +988,7 @@ with report_tab:
         st.header("Production adoption")
 
     with report_header_right:
-        if st.button("Import Graylog", type="primary"):
+        if st.button("Import Graylog CSVs", type="primary"):
             import_graylog_dialog()
 
     st.caption(
@@ -1205,7 +1214,7 @@ Days since last plan
         download_logins = report_logins.copy()
 
         download_period_label = "Monthly"
-        download_freq = "ME"
+        download_freq = "W"
         download_period_suffix = "overall"
 
         if report_type == "Monthly":
@@ -1334,6 +1343,7 @@ Days since last plan
             f"{selected_end.strftime('%B')} {selected_end.day}, "
             f"{selected_end.year}"
     )
+        pdf_filter_key = f"{report_type}|{download_period_suffix}"
         filtered_first_plan = first_plan_after_go_live(
     download_plans,
     go_live_date,
@@ -1392,85 +1402,87 @@ Days since last plan
         )
         else:
             overall_counts = daily_counts
-        
-        st.subheader("Login activity")
-        if download_logins.empty:
-            st.info("The login CSV needs `timestamp` and `username` columns with valid data to show the login trend.")
-        else:
-            login_counts = daily_counts(download_logins, "LoggedAt", "Logins", chart_freq)
-            if is_bar_view:
-                fig_logins = px.bar(login_counts, x="Date", y="Logins", text="Logins", title=f"Logins by {chart_freq_word}")
-                fig_logins.update_traces(
-    textposition="inside",
-    insidetextanchor="middle",
-    textfont={"size": 12},
-    marker_color=COLORS["teal"],
-)
+        login_col, plan_col = st.columns(2)
+        with login_col:
+            st.subheader("Login activity")
+            if download_logins.empty:
+                st.info("The login CSV needs `timestamp` and `username` columns with valid data to show the login trend.")
             else:
-                fig_logins = px.line(login_counts, x="Date", y="Logins", markers=True, title=f"Logins by {chart_freq_word}")
-                fig_logins.update_traces(marker_color=COLORS["teal"], line_color=COLORS["teal"])
-            apply_trend_chart_styling(
-    fig_logins,
-    chart_freq_label,
-    go_live_date if report_type == "Overall" else None,
-    y_max=login_counts["Logins"].max(),
-)
-            flag_zero_activity(fig_logins, login_counts, "Logins")
-            st.plotly_chart(fig_logins, width="stretch")
-            report_figures.append(fig_logins)
-
-        st.subheader("Plan-processing activity")
-        if download_plans.empty:
-            st.info("No valid plan timestamps are available in the uploaded file.")
-        else:
-            plan_totals = daily_counts(download_plans, "ProcessedAt", "Plans processed", chart_freq)
-            
-            plan_types_present = sorted(download_plans["Plan type"].dropna().unique())
-
-            type_pivot = type_split_counts(
-    download_plans,
-    "ProcessedAt",
-    chart_freq,
-    plan_totals["Date"],
-)
-            long_type_counts = type_pivot.melt(id_vars="Date", value_vars=plan_types_present, var_name="Plan type", value_name="Plans processed")
-
-            if is_bar_view:
-                fig_uploads = px.bar(
-                    long_type_counts, x="Date", y="Plans processed", color="Plan type", barmode="stack",
-                    title=f"Plans processed by {chart_freq_word}", color_discrete_map=PLAN_TYPE_COLORS,
+                login_counts = daily_counts(download_logins, "LoggedAt", "Logins", chart_freq)
+                if is_bar_view:
+                    fig_logins = px.bar(login_counts, x="Date", y="Logins", text="Logins", title=f"Logins by {chart_freq_word}")
+                    fig_logins.update_traces(
+                        textposition="inside",
+                        insidetextanchor="middle",
+                        textfont={"size": 12},
+                        marker_color=COLORS["teal"],
+                    )
+                else:
+                    fig_logins = px.line(login_counts, x="Date", y="Logins", markers=True, title=f"Logins by {chart_freq_word}")
+                    fig_logins.update_traces(marker_color=COLORS["teal"], line_color=COLORS["teal"])
+                apply_trend_chart_styling(
+                    fig_logins,
+                    chart_freq_label,
+                    go_live_date if report_type == "Overall" else None,
+                    y_max=login_counts["Logins"].max(),
                 )
+                flag_zero_activity(fig_logins, login_counts, "Logins")
+                st.plotly_chart(fig_logins, width="stretch")
+                report_figures.append(fig_logins)
+
+        with plan_col:
+            st.subheader("Plan-processing activity")
+            if download_plans.empty:
+                st.info("No valid plan timestamps are available in the uploaded file.")
             else:
-                fig_uploads = px.line(
-                    long_type_counts, x="Date", y="Plans processed", color="Plan type", markers=True,
-                    title=f"Plans processed by {chart_freq_word}", color_discrete_map=PLAN_TYPE_COLORS,
+                plan_totals = daily_counts(download_plans, "ProcessedAt", "Plans processed", chart_freq)
+            
+                plan_types_present = sorted(download_plans["Plan type"].dropna().unique())
+
+                type_pivot = type_split_counts(
+                    download_plans,
+                    "ProcessedAt",
+                    chart_freq,
+                    plan_totals["Date"],
                 )
-            fig_uploads.update_layout(legend_title_text="Plan type")
-            apply_trend_chart_styling(
-    fig_uploads,
-    chart_freq_label,
-    go_live_date if report_type == "Overall" else None,
-    y_max=plan_totals["Plans processed"].max(),
-)
-            flag_zero_activity(fig_uploads, plan_totals, "Plans processed")
+                long_type_counts = type_pivot.melt(id_vars="Date", value_vars=plan_types_present, var_name="Plan type", value_name="Plans processed")
 
-            # Total-per-bar labels (segment-level labels get cluttered once stacked).
-            for _, row in plan_totals.iterrows():
-                if row["Plans processed"] > 0:
-                    fig_uploads.add_annotation(
-    x=row["Date"],
-    y=row["Plans processed"] * 0.85,
-    text=str(int(row["Plans processed"])),
-    showarrow=False,
-    font={"color": "#ffffff", "size": 12, "family": "Arial"},
-)
+                if is_bar_view:
+                    fig_uploads = px.bar(
+                        long_type_counts, x="Date", y="Plans processed", color="Plan type", barmode="stack",
+                        title=f"Plans processed by {chart_freq_word}", color_discrete_map=PLAN_TYPE_COLORS,
+                    )
+                else:
+                    fig_uploads = px.line(
+                        long_type_counts, x="Date", y="Plans processed", color="Plan type", markers=True,
+                        title=f"Plans processed by {chart_freq_word}", color_discrete_map=PLAN_TYPE_COLORS,
+                    )
+                fig_uploads.update_layout(legend_title_text="Plan type")
+                apply_trend_chart_styling(
+                    fig_uploads,
+                    chart_freq_label,
+                    go_live_date if report_type == "Overall" else None,
+                    y_max=plan_totals["Plans processed"].max(),
+                )
+                flag_zero_activity(fig_uploads, plan_totals, "Plans processed")
 
-            # Cumulative running total on a secondary axis, per TPA request to see overall progress.
+                # Total-per-bar labels (segment-level labels get cluttered once stacked).
+                for _, row in plan_totals.iterrows():
+                    if row["Plans processed"] > 0:
+                        fig_uploads.add_annotation(
+                            x=row["Date"],
+                            y=row["Plans processed"] * 0.85,
+                            text=str(int(row["Plans processed"])),
+                            showarrow=False,
+                            font={"color": "#ffffff", "size": 12, "family": "Arial"},
+                        )
+
+                # Cumulative running total on a secondary axis, per TPA request to see overall progress.
             
             
 
-            st.plotly_chart(fig_uploads, width="stretch")
-            report_figures.append(fig_uploads)
+                st.plotly_chart(fig_uploads, width="stretch")
+                report_figures.append(fig_uploads)
 
         st.subheader("Plan ownership and categories")
         fig_uploaders = None
@@ -1483,17 +1495,17 @@ Days since last plan
                 st.info("No plan data is available for the uploader chart.")
             else:
                 top_uploaders = (
-    download_plans["USER_NAME"]
-    .fillna("Unknown")
-    .astype(str)
-    .str.replace(r"\s+null$", "", regex=True)
-    .str.strip()
-    .value_counts()
-    .head(10)
-    .sort_values()
-    .rename_axis("User")
-    .reset_index(name="Plans processed")
-)
+                    download_plans["USER_NAME"]
+                    .fillna("Unknown")
+                    .astype(str)
+                    .str.replace(r"\s+null$", "", regex=True)
+                    .str.strip()
+                    .value_counts()
+                    .head(10)
+                    .sort_values()
+                    .rename_axis("User")
+                    .reset_index(name="Plans processed")
+                )
                 fig_uploaders = px.bar(top_uploaders, x="Plans processed", y="User", orientation="h", text="Plans processed", title="Top plan uploaders")
                 fig_uploaders.update_traces(marker_color=COLORS["teal"])
                 st.plotly_chart(fig_uploaders, width="stretch")
@@ -1511,56 +1523,56 @@ Days since last plan
                 report_figures.append(fig_categories)
 
         details = pd.DataFrame([
-    {"Field": "TPA", "Value": customer["TPA"]},
-    {"Field": "Production go-live date", "Value": go_live_date.isoformat()},
-    {
-        "Field": "First plan processed after go-live",
-        "Value": (
-            filtered_first_plan.isoformat(sep=" ")
-            if pd.notna(filtered_first_plan)
-            else "Not found"
-        ),
-    },
-    {
-        "Field": "Last plan processed",
-        "Value": (
-            filtered_last_plan.isoformat(sep=" ")
-            if pd.notna(filtered_last_plan)
-            else "Not found"
-        ),
-    },
-    {
-        "Field": "Days since last plan processed",
-        "Value": (
-            f"{(date.today() - filtered_last_plan.date()).days} days"
-            if pd.notna(filtered_last_plan)
-            else "Not available"
-        ),
-    },
-])
+            {"Field": "TPA", "Value": customer["TPA"]},
+            {"Field": "Production go-live date", "Value": go_live_date.isoformat()},
+            {
+                "Field": "First plan processed after go-live",
+                "Value": (
+                    filtered_first_plan.isoformat(sep=" ")
+                    if pd.notna(filtered_first_plan)
+                    else "Not found"
+                ),
+            },
+            {
+                "Field": "Last plan processed",
+                "Value": (
+                    filtered_last_plan.isoformat(sep=" ")
+                    if pd.notna(filtered_last_plan)
+                    else "Not found"
+                ),
+            },
+            {
+                "Field": "Days since last plan processed",
+                "Value": (
+                    f"{(date.today() - filtered_last_plan.date()).days} days"
+                    if pd.notna(filtered_last_plan)
+                    else "Not available"
+                ),
+            },
+        ])
         st.subheader("Report details")
         st.dataframe(details, width="stretch", hide_index=True)
 
         download_figures = build_period_report_figures(
-    download_plans,
-    download_logins,
-    download_period_label,
-    download_freq,
-go_live_date if report_type == "Overall" else None,
-    fig_uploaders,
-    fig_categories,
-)
+            download_plans,
+            download_logins,
+            download_period_label,
+            download_freq,
+            go_live_date if report_type == "Overall" else None,
+            fig_uploaders,
+            fig_categories,
+        )
 
         html_report = build_downloadable_report(
-    customer,
-    go_live_date,
-    filtered_first_plan,
-    download_plans,
-    download_figures,
-    BRANDING,
-    report_period_text,
-    include_logo=True,
-)
+            customer,
+            go_live_date,
+            filtered_first_plan,
+            download_plans,
+            download_figures,
+            BRANDING,
+            report_period_text,
+            include_logo=True,
+        )
         st.download_button(
             "Download interactive HTML report",
             data=html_report,
@@ -1573,18 +1585,23 @@ go_live_date if report_type == "Overall" else None,
             if st.button("Prepare PDF report", icon=":material/picture_as_pdf:"):
                 try:
                     st.session_state["pdf_report"] = build_pdf_report(
-    customer,
-    go_live_date,
-    filtered_first_plan,
-    download_plans,
-    download_figures,
-    BRANDING,
-    report_period_text,
-)
+                        customer,
+                        go_live_date,
+                        filtered_first_plan,
+                        download_plans,
+                        download_figures,
+                        BRANDING,
+                        report_period_text,
+                    )
                     st.session_state["pdf_report_tpa"] = customer["TPA"]
+                    st.session_state["pdf_report_filter_key"] = pdf_filter_key
                 except Exception as error:
                     st.error(f"Could not create the PDF report: {error}")
-            if st.session_state.get("pdf_report") and st.session_state.get("pdf_report_tpa") == customer["TPA"]:
+            if (
+                st.session_state.get("pdf_report")
+                and st.session_state.get("pdf_report_tpa") == customer["TPA"]
+                and st.session_state.get("pdf_report_filter_key") == pdf_filter_key
+            ):
                 st.download_button(
                     "Download PDF report",
                     data=st.session_state["pdf_report"],
