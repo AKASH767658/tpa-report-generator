@@ -5,3 +5,4 @@ jinja2
 kaleido
 playwright
 python-dotenv
+psycopg2-binary

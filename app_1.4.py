@@ -15,6 +15,7 @@ import streamlit as st
 from graylog_playwright import run_graylog_automation
 from spai_prod import run_spai_prod_automation
 from tpa_list import TPAS
+from plan_management_report import render_plan_management_report
 
 BRANDING_DIR = Path("assets") / "branding"
 BRANDING_CONFIG_FILE = BRANDING_DIR / "branding.json"
@@ -332,6 +333,7 @@ def apply_trend_chart_styling(fig, freq_label, go_live_date=None, y_max=None):
             annotation_font_color=COLORS["chart_tertiary"],
         )
     return fig
+
 def build_period_report_figures(
     report_plans,
     report_logins,
@@ -341,52 +343,37 @@ def build_period_report_figures(
     ownership_figure,
     categories_figure,
 ):
-    """Build the progression charts used by the selected downloadable report."""
+    """Build charts for the selected downloadable report."""
     figures = []
 
-    is_bar_view = True
     period_word = {
-    "Daily": "day",
-    "Weekly": "week",
-    "Monthly": "month",
-    "Quarterly": "quarter",
-}[period_label]
+        "Daily": "day",
+        "Weekly": "week",
+        "Monthly": "month",
+        "Quarterly": "quarter",
+    }.get(period_label, period_label.lower())
 
-    # Login activity
+    # Login activity chart
     if not report_logins.empty:
-        login_counts = overall_counts(
-    download_logins,
-    "LoggedAt",
-    "Logins",
-    chart_freq,
-)
+        login_counts = daily_counts(
+            report_logins,
+            "LoggedAt",
+            "Logins",
+            period_freq,
+        )
 
-        if is_bar_view:
-            fig_logins = px.bar(
-                login_counts,
-                x="Date",
-                y="Logins",
-                text="Logins",
-                title=f"Logins by {period_word}",
-            )
-            fig_logins.update_traces(
-                textposition="inside",
-                insidetextanchor="middle",
-                textfont={"size": 12},
-                marker_color=COLORS["teal"],
-            )
-        else:
-            fig_logins = px.line(
-                login_counts,
-                x="Date",
-                y="Logins",
-                markers=True,
-                title=f"Logins by {period_label.lower()}",
-            )
-            fig_logins.update_traces(
-                marker_color=COLORS["teal"],
-                line_color=COLORS["teal"],
-            )
+        fig_logins = px.bar(
+            login_counts,
+            x="Date",
+            y="Logins",
+            text="Logins",
+            title=f"Logins by {period_word}",
+        )
+
+        fig_logins.update_traces(
+            textposition="inside",
+            marker_color=COLORS["teal"],
+        )
 
         apply_trend_chart_styling(
             fig_logins,
@@ -394,37 +381,38 @@ def build_period_report_figures(
             go_live_date,
             y_max=login_counts["Logins"].max(),
         )
+
         flag_zero_activity(fig_logins, login_counts, "Logins")
         figures.append(fig_logins)
 
-    # Plan-processing activity
+    # Plan-processing activity chart
     if not report_plans.empty:
-        plan_totals = overall_counts(
-    report_plans,
-    "ProcessedAt",
-    "Plans processed",
-    period_freq,
-)
+        plan_totals = daily_counts(
+            report_plans,
+            "ProcessedAt",
+            "Plans processed",
+            period_freq,
+        )
 
         plan_types_present = sorted(
             report_plans["Plan type"].dropna().unique()
         )
 
-        type_pivot = type_split_counts(
-            report_plans,
-            "ProcessedAt",
-            period_freq,
-            plan_totals["Date"],
-        )
+        if plan_types_present:
+            type_pivot = type_split_counts(
+                report_plans,
+                "ProcessedAt",
+                period_freq,
+                plan_totals["Date"],
+            )
 
-        long_type_counts = type_pivot.melt(
-            id_vars="Date",
-            value_vars=plan_types_present,
-            var_name="Plan type",
-            value_name="Plans processed",
-        )
+            long_type_counts = type_pivot.melt(
+                id_vars="Date",
+                value_vars=plan_types_present,
+                var_name="Plan type",
+                value_name="Plans processed",
+            )
 
-        if is_bar_view:
             fig_uploads = px.bar(
                 long_type_counts,
                 x="Date",
@@ -434,51 +422,33 @@ def build_period_report_figures(
                 title=f"Plans processed by {period_word}",
                 color_discrete_map=PLAN_TYPE_COLORS,
             )
-        else:
-            fig_uploads = px.line(
-                long_type_counts,
-                x="Date",
-                y="Plans processed",
-                color="Plan type",
-                markers=True,
-                title=f"Plans processed by {period_label.lower()}",
-                color_discrete_map=PLAN_TYPE_COLORS,
+
+            fig_uploads.update_layout(legend_title_text="Plan type")
+
+            apply_trend_chart_styling(
+                fig_uploads,
+                period_label,
+                go_live_date,
+                y_max=plan_totals["Plans processed"].max(),
             )
 
-        fig_uploads.update_layout(
-            legend_title_text="Plan type"
-        )
+            flag_zero_activity(
+                fig_uploads,
+                plan_totals,
+                "Plans processed",
+            )
 
-        apply_trend_chart_styling(
-    fig_uploads,
-    period_label,
-    go_live_date,
-    y_max=plan_totals["Plans processed"].max(),
-)
+            figures.append(fig_uploads)
 
-        flag_zero_activity(
-            fig_uploads,
-            plan_totals,
-            "Plans processed",
-        )
-
-        for _, row in plan_totals.iterrows():
-            if row["Plans processed"] > 0:
-                fig_uploads.add_annotation(
-                    x=row["Date"],
-                    y=row["Plans processed"] * 0.85,
-                    text=str(int(row["Plans processed"])),
-                    showarrow=False,
-                    font={"color": "#ffffff", "size": 12, "family": "Arial"},
-                )
-
-        figures.append(fig_uploads)
+    # Plan ownership and category charts
     if ownership_figure is not None:
-            figures.append(ownership_figure)
-    
+        figures.append(ownership_figure)
+
     if categories_figure is not None:
-            figures.append(categories_figure)
+        figures.append(categories_figure)
+
     return figures
+
 
 def flag_zero_activity(fig, counts_df, value_col):
     return fig
@@ -503,7 +473,17 @@ def export_safe_figure(figure):
     return pio.from_json(pio.to_json(figure, validate=False), output_type="Figure")
 
 
-def build_downloadable_report(customer, go_live_date, first_plan, plans, figures, branding,report_period_text,include_logo=True,):
+def build_downloadable_report(
+    customer,
+    go_live_date,
+    first_plan,
+    plans,
+    figures,
+    branding,
+    report_period_text,
+    include_logo=True,
+    all_plans=None,
+):
     """Create a standalone, branded HTML report with the generated charts,
     used as the source for the downloadable PDF."""
     startup_count = int((plans["Plan type"] == "Startup").sum())
@@ -524,14 +504,38 @@ def build_downloadable_report(customer, go_live_date, first_plan, plans, figures
     days_since_last_plan_text = f"{days_since_last_plan} days" if days_since_last_plan is not None else "-"
     is_stale = days_since_last_plan is not None and days_since_last_plan > STALE_PLAN_THRESHOLD_DAYS
     colors = report_colors_from_ui(branding)
+    source_plans = all_plans if all_plans is not None else plans
+
+    processed_dates = pd.to_datetime(
+    source_plans["ProcessedAt"], errors="coerce"
+).dropna()
+
+    today = pd.Timestamp.today()
+    plans_ytd = int((processed_dates.dt.year == today.year).sum())
+
+    current_quarter = (today.month - 1) // 3 + 1
+    plans_qtd = int(
+    (
+        (processed_dates.dt.year == today.year)
+        & (processed_dates.dt.quarter == current_quarter)
+    ).sum()
+)
+
+    plans_mtd = int(
+    (
+        (processed_dates.dt.year == today.year)
+        & (processed_dates.dt.month == today.month)
+    ).sum()
+)
+
     metrics = [
-        ("Production go-live", go_live_date.strftime("%d %b %Y")),
-        ("First plan processed", first_plan_text),
-        ("Time to first plan", time_to_first),
-        ("Total processed plans", str(len(plans))),
-        ("Startup plans", str(startup_count)),
-        ("Takeover plans", str(takeover_count)),
-    ]
+    ("Plans processed YTD", str(plans_ytd)),
+    ("Plans processed QTD", str(plans_qtd)),
+    ("Plans processed MTD", str(plans_mtd)),
+    ("Total processed plans", str(len(plans))),
+    ("Startup plans", str(startup_count)),
+    ("Takeover plans", str(takeover_count)),
+]
     metric_rows = []
     for i in range(0, len(metrics), 3):
         cells = "".join(
@@ -686,7 +690,7 @@ h1 {{ margin:0; font-size:32px; line-height:1.15; font-weight:700; letter-spacin
 </div></body></html>"""
 
 
-def build_pdf_report(customer, go_live_date, first_plan, plans, figures, branding,report_period_text,):
+def build_pdf_report(customer, go_live_date, first_plan, plans, figures, branding,report_period_text,all_plans=None,):
     """Create the PDF report and overlay the exact SVG logo on page 1."""
 
     import io
@@ -876,8 +880,8 @@ st.markdown(
 st.title("TPA production go-live report")
 st.caption("Track production go-live, first plan processed, and adoption activity in one report.")
 
-setup_tab, report_tab = st.tabs(
-    ["TPA setup", "Go-live report"]
+setup_tab, report_tab, plan_management_tab = st.tabs(
+    ["TPA setup", "Go-live report", "Plan Management"]
 )
 
 
@@ -1137,7 +1141,27 @@ with report_tab:
         startup_count = int((report_plans["Plan type"] == "Startup").sum())
         takeover_count = int((report_plans["Plan type"] == "Takeover").sum())
         report_figures = []
+        today = date.today()
+        processed_dates = report_plans["ProcessedAt"]
 
+        plans_ytd = int(
+    (processed_dates.dt.year == today.year).sum()
+)
+
+        current_quarter = (today.month - 1) // 3 + 1
+
+        plans_qtd = int(
+    (
+        (processed_dates.dt.year == today.year)
+        & (processed_dates.dt.quarter == current_quarter)
+    ).sum()
+)
+        plans_mtd = int(
+    (
+        (processed_dates.dt.year == today.year)
+        & (processed_dates.dt.month == today.month)
+    ).sum()
+)
         st.divider()
         st.markdown(
             milestone_summary_html(customer["TPA"], go_live_date, first_plan),
@@ -1147,10 +1171,11 @@ with report_tab:
         c1.metric("Production go-live", go_live_date.strftime("%d %b %Y"))
         c2.metric("First plan processed", first_plan.strftime("%d %b %Y, %H:%M") if pd.notna(first_plan) else "Not found")
         c3.metric("Time to first plan", f"{(first_plan.date() - go_live_date).days} days" if pd.notna(first_plan) else "-")
+        st.subheader("Production overview")
         c4, c5, c6 = st.columns(3)
-        c4.metric("Total processed plans", len(report_plans))
-        c5.metric("Startup plans", startup_count)
-        c6.metric("Takeover plans", takeover_count)
+        c4.metric("Plans processed YTD", plans_ytd)
+        c5.metric("Plans processed QTD", plans_qtd)
+        c6.metric("Plans processed MTD", plans_mtd)
 
         last_plan = last_plan_processed(report_plans)
         days_since_last_plan = (date.today() - last_plan.date()).days if pd.notna(last_plan) else None
@@ -1572,6 +1597,7 @@ Days since last plan
             BRANDING,
             report_period_text,
             include_logo=True,
+            all_plans=report_plans,
         )
         st.download_button(
             "Download interactive HTML report",
@@ -1592,6 +1618,7 @@ Days since last plan
                         download_figures,
                         BRANDING,
                         report_period_text,
+                        all_plans=report_plans,
                     )
                     st.session_state["pdf_report_tpa"] = customer["TPA"]
                     st.session_state["pdf_report_filter_key"] = pdf_filter_key
@@ -1613,3 +1640,6 @@ Days since last plan
             st.info(
                 "PDF export is not configured on this computer. Download the interactive HTML report and use your browser's Print > Save as PDF option."
             )
+
+with plan_management_tab:
+    render_plan_management_report()
