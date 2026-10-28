@@ -1,0 +1,6 @@
+{
+  "app_title": "TPA Management Report",
+  "data_path_env": "DATA_PATH",
+  "graylog_output_subdirectory": "graylog",
+  "customer_file": "customers.csv"
+}
